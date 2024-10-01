@@ -17,6 +17,7 @@ module amrex_boxarray_module
      type(c_ptr) :: p = c_null_ptr
    contains
      generic   :: assignment(=) => amrex_boxarray_assign, amrex_boxarray_install  ! shallow copy
+
      procedure :: clone         => amrex_boxarray_clone    ! deep copy
      procedure :: move          => amrex_boxarray_move     ! transfer ownership
      generic   :: maxSize       => amrex_boxarray_maxsize_int, &  ! make the boxes smaller
