@@ -12,11 +12,10 @@ module amrex_multifabutil_module
        &    amrex_average_down_cell,  & ! average down of cell data
        &    amrex_average_down_node,  & ! average down of nodal data
        &    amrex_average_down_faces, & ! average down of face data
-       &    amrex_average_cellcenter_to_face ! average from cell centers to faces
-
-  public :: amrex_average_down_dg_conservative, &
-            amrex_average_down_dg_pointwise, &
-            amrex_average_down_cg
+       &    amrex_average_cellcenter_to_face, & ! average from cell centers to faces
+       &    amrex_average_down_dg_conservative, & ! average down of cell data (dg, conservative)
+       &    amrex_average_down_dg_pointwise, & ! average down of cell data (dg, point-wise)
+       &    amrex_average_down_cg ! average down of cell data (cg, point-wise)
 
   interface
      subroutine amrex_fi_average_down (fmf, cmf, fgeom, cgeom, scomp, ncomp, rr) bind(c)
@@ -90,7 +89,6 @@ contains
     call amrex_fi_average_down(fmf%p, cmf%p, fgeom%p, cgeom%p, scomp-1, ncomp, rr)
   end subroutine amrex_average_down
 
-<<<<<<< HEAD
   SUBROUTINE amrex_average_down_dg_conservative &
     ( FineMF, CrseMF, FineMF_G, CrseMF_G, nComp, RefRatio, &
       nDOFX, nFine, vpFineToCoarseProjectionMatrix )
@@ -135,7 +133,7 @@ contains
              nDOFX, nFine, G2L, L2G, F2C )
 
   END SUBROUTINE amrex_average_down_cg
-=======
+
   subroutine amrex_average_down_cell (fmf, cmf, scomp, ncomp, rr)
     type(amrex_multifab), intent(in   ) :: fmf
     type(amrex_multifab), intent(inout) :: cmf
@@ -149,7 +147,6 @@ contains
     integer, intent(in) :: scomp, ncomp, rr
     call amrex_fi_average_down_cell_node(fmf%p, cmf%p, scomp-1, ncomp, rr)
   end subroutine amrex_average_down_node
->>>>>>> upstream/development
 
   subroutine amrex_average_down_faces (fmf, cmf, cgeom, scomp, ncomp, rr)
     type(amrex_multifab), intent(in   ) :: fmf(amrex_spacedim)
