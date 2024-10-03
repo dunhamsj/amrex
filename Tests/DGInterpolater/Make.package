@@ -1,0 +1,5 @@
+VPATH_LOCATIONS += $(AMREX_DIR)/Tests/DGInterpolater
+CEXE_sources  += main.cpp
+CEXE_headers  += AMReX_Interpolater.H
+VPATH_LOCATIONS += $(AMREX_DIR)/Src/AmrCore
+INCLUDE_LOCATIONS += $(AMREX_DIR)/Src/AmrCore
