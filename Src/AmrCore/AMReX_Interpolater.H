@@ -1189,6 +1189,140 @@ extern AMREX_EXPORT DGInterp                  dg_interp;
 extern AMREX_EXPORT CGInterp                  cg_interp;
 extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 
+/**
+* \brief Base class for DG interpolaters.
+*
+* Specifies interpolater interface for coarse-to-fine interpolation in space
+* with nodal DG-based elements.
+*/
+enum struct DGBasis { Lagrange };
+template <int nNodes1D, int nDOFX, int nFineV, DGBasis Basis>
+class DGInterpolater
+    : public InterpBase
+{
+    public:
+        DGInterpolater ()
+        {
+            switch(Basis)
+            {
+                case amrex::DGBasis::Lagrange:
+                    compute_quad_weights_and_points();
+                    for(int i = 0; i < nNodes1D; i++) {
+                        std::cout<<quad_points(i)<<" "<<quad_weights(i)<<"\n";
+                    }
+                    break;
+                default:
+                    amrex::Abort("Unknown Basis");
+            }
+            //  initialilze matrix here.
+        }
+
+        /**
+        * \brief Returns coarsened box given fine box and refinement ratio.
+        *
+        * \param fine
+        * \param ratio
+        */
+        Box CoarseBox (const Box& fine, int ratio)
+            { return amrex::coarsen(fine,ratio); };
+
+        /**
+        * \brief Returns coarsened box given fine box and refinement ratio.
+        *
+        * \param fine
+        * \param ratio
+        */
+        Box CoarseBox (const Box& fine, const IntVect& ratio)
+            { return amrex::coarsen(fine,ratio); };
+
+    private:
+        Array3D<Real,0,nFineV-1,0,nDOFX-1,0,nDOFX-1> m_matrix;
+        Array1D<Real,0,nNodes1D-1> quad_points;
+        Array1D<Real,0,nNodes1D-1> quad_weights;
+        void compute_quad_weights_and_points ()
+        {
+            /* Adapted from Mark Newman's Python version:
+               https://public.websites.umich.edu/~mejn/cp/programs/gaussxw.py
+            */
+
+            if (nNodes1D == 1){
+                quad_points (0) = 0.0;
+                quad_weights(0) = 1.0;
+                return;
+            }
+
+            // Initial approximation to roots of the Legendre polynomial
+            Array1D<Real,0,nNodes1D-1> a;
+            Real da = ( 4.0 * (Real)nNodes1D - 1.0 - 3.0 ) / ( (Real)nNodes1D - 1.0 );
+            for (int i = 0; i < nNodes1D; i++) {
+                a(i) = ( 3.0 + i * da ) / ( 4.0 * (Real)nNodes1D + 2.0 );
+            }
+
+            Array1D<Real,0,nNodes1D-1> x;
+            for (int i = 0; i < nNodes1D; i++ ) {
+                x(i) = cos( M_PI * a(i)
+                         + 1.0 / ( 8.0 * (Real)nNodes1D * (Real)nNodes1D
+                                   * tan( a(i) ) ) );
+            }
+
+            // Find roots using Newton's method
+            Real const epsilon = 1.0e-15;
+            Real delta = 1.0;
+            Array1D<Real,0,nNodes1D-1> p0, p1, dx, dp;
+            Real p00;
+            while ( delta > epsilon ) {
+                for (int i = 0; i < nNodes1D; i++) { p0(i) = 1.0; }
+                p1 = x;
+                for (int k = 1;  k < nNodes1D; k++) {
+                    for (int i = 0; i < nNodes1D; i++) {
+                        p00 = p1(i);
+                        p1(i) = ( ( 2.0 * (Real)k + 1.0 ) * x(i) * p1(i)
+                                  - (Real)k * p0(i) ) / ( (Real)k + 1.0 );
+                        p0(i) = p00;
+                    }
+                }
+                delta = -1.0e100;
+                for (int i = 0; i < nNodes1D; i++) {
+                    dp(i) = ( (Real)nNodes1D + 1.0 )
+                               * ( p0(i) - x(i) * p1(i) ) / ( 1.0 - x(i) * x(i) );
+                    dx(i) = p1(i) / dp(i);
+                    x(i) -= dx(i);
+                    delta = max(delta, std::abs(dx(i)) );
+                }
+            }
+
+            // Calculate the weights
+
+            Array1D<Real,0,nNodes1D-1> w;
+            for (int i = 0; i < nNodes1D; i++) {
+                w(i)
+                  = 2.0 * ( (Real)nNodes1D + 1.0 )
+                      * ( (Real)nNodes1D + 1.0 )
+                      / ( (Real)nNodes1D * (Real)nNodes1D * ( 1.0 - x(i) * x(i) )
+                          * dp(i) * dp(i) );
+                w(i) /= 2.0;
+                x(i) /= 2.0;
+            }
+
+            // Sort arrays in ascending order by quadrature point values
+            //
+
+            for (int i = 0; i < nNodes1D; i++) {
+                quad_points (i) = x(nNodes1D-1-i);
+                quad_weights(i) = w(nNodes1D-1-i);
+            }
+
+            // Force central quadrature point to be zero
+
+            if (nNodes1D % 2 == 1) {
+                quad_points(nNodes1D/2) = 0.0;
+            }
+
+            return;
+        };
+
+};
+
 }
 
 #endif /*_INTERPOLATER_H_*/
