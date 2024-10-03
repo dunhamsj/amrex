@@ -1214,7 +1214,7 @@ class DGInterpolater
                 default:
                     amrex::Abort("Unknown Basis");
             }
-            //  initialilze matrix here.
+            //  initialize matrix here.
         }
 
         /**
@@ -1223,8 +1223,8 @@ class DGInterpolater
         * \param fine
         * \param ratio
         */
-        Box CoarseBox (const Box& fine, int ratio)
-            { return amrex::coarsen(fine,ratio); };
+        Box CoarseBox (const Box& fine, int ratio) override
+            { return amrex::coarsen(fine,ratio); }
 
         /**
         * \brief Returns coarsened box given fine box and refinement ratio.
@@ -1232,8 +1232,8 @@ class DGInterpolater
         * \param fine
         * \param ratio
         */
-        Box CoarseBox (const Box& fine, const IntVect& ratio)
-            { return amrex::coarsen(fine,ratio); };
+        Box CoarseBox (const Box& fine, const IntVect& ratio) override
+            { return amrex::coarsen(fine,ratio); }
 
     private:
         Array3D<Real,0,nFineV-1,0,nDOFX-1,0,nDOFX-1> m_matrix;
@@ -1318,8 +1318,7 @@ class DGInterpolater
                 quad_points(nNodes1D/2) = 0.0;
             }
 
-            return;
-        };
+        }
 
 };
 
