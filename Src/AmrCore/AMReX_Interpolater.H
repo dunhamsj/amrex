@@ -1281,7 +1281,7 @@ class DGInterpolater
                         p0(i) = p00;
                     }
                 }
-                delta = -1.0e100;
+                delta = (Real)0.0;
                 for (int i = 0; i < nNodes1D; i++) {
                     dp(i) = ( (Real)nNodes1D + 1.0 )
                                * ( p0(i) - x(i) * p1(i) ) / ( 1.0 - x(i) * x(i) );
