@@ -1255,7 +1255,7 @@ class DGInterpolater
             Array1D<Real,0,nNodes1D-1> a;
             Real da = ( 4.0 * (Real)nNodes1D - 1.0 - 3.0 ) / ( (Real)nNodes1D - 1.0 );
             for (int i = 0; i < nNodes1D; i++) {
-                a(i) = ( 3.0 + i * da ) / ( 4.0 * (Real)nNodes1D + 2.0 );
+                a(i) = ( 3.0 + (Real)i * da ) / ( 4.0 * (Real)nNodes1D + 2.0 );
             }
 
             Array1D<Real,0,nNodes1D-1> x;
