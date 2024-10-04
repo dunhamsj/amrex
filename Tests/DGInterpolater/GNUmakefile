@@ -2,6 +2,8 @@
 # If you set XXX_HOME as an environment variable, this line will be ignored
 AMREX_HOME  ?= $(AMREX_DIR)
 
+PRECISION = DOUBLE
+
 DEBUG = TRUE
 
 USE_MPI = TRUE
