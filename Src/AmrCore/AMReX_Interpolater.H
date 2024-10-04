@@ -1256,36 +1256,36 @@ class DGInterpolater
                         if (nFineV[0] > 1) {
                             for (int k = 0; k < nNodes[0]; k++) {
                                 xiX1[k]
-                                  = 0.5 * ( x1q[k] + std::pow(-1,iFineX1+1)
-                                                       * 0.5 );
+                                  = Half * ( x1q[k] + std::pow(-1,iFineX1+1)
+                                                       * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[0]; k++) {
-                                xiX1[k] = 0.0;
+                                xiX1[k] = Zero;
                             }
                         }
 
                         if (nFineV[1] > 1) {
                             for (int k = 0; k < nNodes[1]; k++) {
                                 xiX2[k]
-                                  = 0.5 * ( x2q[k] + std::pow(-1,iFineX2+1)
-                                                       * 0.5 );
+                                  = Half * ( x2q[k] + std::pow(-1,iFineX2+1)
+                                                       * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[1]; k++) {
-                                xiX2[k] = 0.0;
+                                xiX2[k] = Zero;
                             }
                         }
 
                         if (nFineV[2] > 1) {
                             for (int k = 0; k < nNodes[2]; k++) {
                                 xiX3[k]
-                                  = 0.5 * ( x3q[k] + std::pow(-1,iFineX3+1)
-                                                       * 0.5 );
+                                  = Half * ( x3q[k] + std::pow(-1,iFineX3+1)
+                                                       * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[2]; k++) {
-                                xiX3[k] = 0.0;
+                                xiX3[k] = Zero;
                             }
                         }
 
@@ -1298,17 +1298,17 @@ class DGInterpolater
                             for (int j2 = 0; j2 < nNodes[1]; j2++) {
                             for (int j1 = 0; j1 < nNodes[0]; j1++) {
                                 m_c2fmatrix(iFine,ii,jj)
-                                  = Lag( 0.5 * ( x1q[i1]
+                                  = Lag( Half * ( x1q[i1]
                                                    + std::pow(-1, iFineX1+1)
-                                                       * 0.5 ),
+                                                       * Half ),
                                          j1, x1q, nNodes[0] )
-                                  * Lag( 0.5 * ( x1q[i2]
+                                  * Lag( Half * ( x1q[i2]
                                                    + std::pow(-1, iFineX2+1)
-                                                       * 0.5 ),
+                                                       * Half ),
                                          j2, x2q, nNodes[1] )
-                                  * Lag( 0.5 * ( x1q[i3]
+                                  * Lag( Half * ( x1q[i3]
                                                    + std::pow(-1, iFineX3+1)
-                                                       * 0.5 ),
+                                                       * Half ),
                                          j3, x3q, nNodes[2] );
                                 jj++;
                             }}}
@@ -1353,6 +1353,8 @@ class DGInterpolater
             { return amrex::coarsen(fine,ratio); }
 
     private:
+        Real const Zero = 0.0;
+        Real const Half = 0.5;
         Array3D<Real,0,nFine-1,0,nDOF-1,0,nDOF-1> m_c2fmatrix;
         void compute_quad_weights_and_points
           ( int N, Real *& xq, Real *& wq )
@@ -1363,30 +1365,35 @@ class DGInterpolater
              * https://public.websites.umich.edu/~mejn/cp/programs/gaussxw.py
             */
 
+            Real const One   = 1.0;
+            Real const Two   = 2.0;
+            Real const Three = 3.0;
+            Real const Four  = 4.0;
+            Real const Eight = 8.0;
+
             if (N == 1){
-                xq[0] = 0.0;
-                wq[0] = 1.0;
+                xq[0] = Zero;
+                wq[0] = One;
                 return;
             }
 
             // Initial approximation to roots of the Legendre polynomial
             Real * a = new Real[N];
             Real da
-              = ( 4.0 * (Real)N - 1.0 - 3.0 ) / ( (Real)N - 1.0 );
+              = ( Four * (Real)N - One - Three ) / ( (Real)N - One );
             for (int i = 0; i < N; i++) {
-                a[i] = ( 3.0 + (Real)i * da ) / ( 4.0 * (Real)N + 2.0 );
+                a[i] = ( Three + (Real)i * da ) / ( Four * (Real)N + Two );
             }
 
             Real * x = new Real[N];
             for (int i = 0; i < N; i++ ) {
                 x[i] = cos( M_PI * a[i]
-                         + 1.0 / ( 8.0 * (Real)N * (Real)N
-                                   * tan( a[i] ) ) );
+                         + One / ( Eight * (Real)N * (Real)N * tan( a[i] ) ) );
             }
 
             // Find roots using Newton's method
             Real const epsilon = 1.0e-15;
-            Real delta = 1.0;
+            Real delta = One;
             Real * p0 = new Real[N];
             Real * p1 = new Real[N];
             Real * dx = new Real[N];
@@ -1394,22 +1401,22 @@ class DGInterpolater
             Real p00;
             while ( delta > epsilon ) {
                 for (int i = 0; i < N; i++) {
-                    p0[i] = 1.0;
+                    p0[i] = One;
                     p1[i] = x[i];
                 }
                 for (int k = 1;  k < N; k++) {
                     for (int i = 0; i < N; i++) {
                         p00 = p1[i];
-                        p1[i] = ( ( 2.0 * (Real)k + 1.0 ) * x[i] * p1[i]
-                                  - (Real)k * p0[i] ) / ( (Real)k + 1.0 );
+                        p1[i] = ( ( Two * (Real)k + One ) * x[i] * p1[i]
+                                  - (Real)k * p0[i] ) / ( (Real)k + One );
                         p0[i] = p00;
                     }
                 }
-                delta = (Real)0.0;
+                delta = Zero;
                 for (int i = 0; i < N; i++) {
-                    dp[i] = ( (Real)N + 1.0 )
+                    dp[i] = ( (Real)N + One )
                                * ( p0[i] - x[i] * p1[i] )
-                               / ( 1.0 - x[i] * x[i] );
+                               / ( One - x[i] * x[i] );
                     dx[i] = p1[i] / dp[i];
                     x[i] -= dx[i];
                     delta = max(delta, std::abs(dx[i]) );
@@ -1421,12 +1428,12 @@ class DGInterpolater
             Real * w = new Real[N];
             for (int i = 0; i < N; i++) {
                 w[i]
-                  = 2.0 * ( (Real)N + 1.0 )
-                      * ( (Real)N + 1.0 )
-                      / ( (Real)N * (Real)N * ( 1.0 - x[i] * x[i] )
+                  = Two * ( (Real)N + One )
+                      * ( (Real)N + One )
+                      / ( (Real)N * (Real)N * ( One - x[i] * x[i] )
                           * dp[i] * dp[i] );
-                w[i] /= 2.0;
-                x[i] /= 2.0;
+                w[i] /= Two;
+                x[i] /= Two;
             }
 
             // Sort arrays in ascending order by quadrature point values
@@ -1448,7 +1455,7 @@ class DGInterpolater
             // Force central quadrature point to be zero
 
             if (N % 2 == 1) {
-                xq[N/2] = 0.0;
+                xq[N/2] = Zero;
             }
         } // end compute_quad_weights_and_points
         Real Lag( Real x, int i, Real const xq[], int N ) {
