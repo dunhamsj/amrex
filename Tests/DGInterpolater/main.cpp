@@ -8,10 +8,9 @@ int main(int argc, char* argv[])
     amrex::Initialize(argc, argv);
 
     const int nNodes1D = 2;
-    const int nDOFX    = std::pow(nNodes1D, AMREX_SPACEDIM);
     const int nFineV   = std::pow(2, AMREX_SPACEDIM);
 
-    DGInterpolater<nNodes1D, nDOFX, nFineV, amrex::DGBasis::Lagrange> myInterp;
+    DGInterpolater<nNodes1D, nFineV, amrex::DGBasis::Lagrange> myInterp;
 
     amrex::Finalize();
 

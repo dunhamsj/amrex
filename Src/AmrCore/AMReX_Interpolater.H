@@ -1196,12 +1196,11 @@ extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 * with nodal DG-based elements.
 *
 * \tparam nNodes1D The number of nodes per element in each active dimension.
-* \tparam nDOF The total number of nodes per element.
 * \tparam nFine The total number of fine elements covering a coarse element.
 * \tparam Basis The polynomial basis on which the DG solution is based.
 */
 enum struct DGBasis { Lagrange };
-template <int nNodes1D, int nDOF, int nFine, DGBasis Basis>
+template <int nNodes1D, int nFine, DGBasis Basis>
 class DGInterpolater
     : public InterpBase
 {
@@ -1259,8 +1258,9 @@ class DGInterpolater
                         if (nFineV[0] > 1) {
                             for (int k = 0; k < nNodes[0]; k++) {
                                 xiX1[k]
-                                  = Half * ( x1q[k] + std::pow(-1,iFineX1+1)
-                                                       * Half );
+                                  = Half * ( x1q[k]
+                                               + (Real)std::pow(-1, iFineX1+1)
+                                                   * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[0]; k++) {
@@ -1271,8 +1271,9 @@ class DGInterpolater
                         if (nFineV[1] > 1) {
                             for (int k = 0; k < nNodes[1]; k++) {
                                 xiX2[k]
-                                  = Half * ( x2q[k] + std::pow(-1,iFineX2+1)
-                                                       * Half );
+                                  = Half * ( x2q[k]
+                                               + (Real)std::pow(-1, iFineX2+1)
+                                                   * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[1]; k++) {
@@ -1283,8 +1284,9 @@ class DGInterpolater
                         if (nFineV[2] > 1) {
                             for (int k = 0; k < nNodes[2]; k++) {
                                 xiX3[k]
-                                  = Half * ( x3q[k] + std::pow(-1,iFineX3+1)
-                                                       * Half );
+                                  = Half * ( x3q[k]
+                                               + (Real)std::pow(-1, iFineX3+1)
+                                                   * Half );
                             }
                         } else {
                             for (int k = 0; k < nNodes[2]; k++) {
@@ -1301,17 +1303,20 @@ class DGInterpolater
                             for (int j2 = 0; j2 < nNodes[1]; j2++) {
                             for (int j1 = 0; j1 < nNodes[0]; j1++) {
                                 m_c2fmatrix(iFine,ii,jj)
-                                  = Lag( Half * ( x1q[i1]
-                                                   + std::pow(-1, iFineX1+1)
-                                                       * Half ),
+                                  = Lag( Half
+                                           * ( x1q[i1]
+                                                 + (Real)std::pow(-1, iFineX1+1)
+                                                     * Half ),
                                          j1, x1q, nNodes[0] )
-                                  * Lag( Half * ( x1q[i2]
-                                                   + std::pow(-1, iFineX2+1)
-                                                       * Half ),
+                                  * Lag( Half
+                                           * ( x1q[i2]
+                                                 + (Real)std::pow(-1, iFineX2+1)
+                                                    * Half ),
                                          j2, x2q, nNodes[1] )
-                                  * Lag( Half * ( x1q[i3]
-                                                   + std::pow(-1, iFineX3+1)
-                                                       * Half ),
+                                  * Lag( Half
+                                           * ( x1q[i3]
+                                                 + (Real)std::pow(-1, iFineX3+1)
+                                                     * Half ),
                                          j3, x3q, nNodes[2] );
                                 jj++;
                             }}}
@@ -1334,7 +1339,6 @@ class DGInterpolater
             delete[] x2q;
             delete[] w1q;
             delete[] x1q;
-
         }
 
         /**
@@ -1344,7 +1348,7 @@ class DGInterpolater
         * \param ratio
         */
         Box CoarseBox (const Box& fine, int ratio) override
-            { return amrex::coarsen(fine,ratio); }
+            { return amrex::coarsen(fine, ratio); }
 
         /**
         * \brief Returns coarsened box given fine box and refinement ratio.
@@ -1353,12 +1357,13 @@ class DGInterpolater
         * \param ratio
         */
         Box CoarseBox (const Box& fine, const IntVect& ratio) override
-            { return amrex::coarsen(fine,ratio); }
+            { return amrex::coarsen(fine, ratio); }
 
     private:
-        Array3D<Real,0,nFine-1,0,nDOF-1,0,nDOF-1> m_c2fmatrix;
+        Array3D<Real,0,nFine-1,0,(int)std::pow(nNodes1D, AMREX_SPACEDIM)-1,
+                     0,(int)std::pow(nNodes1D, AMREX_SPACEDIM)-1> m_c2fmatrix;
         void compute_quad_weights_and_points
-          ( int N, Real *& xq, Real *& wq )
+          (int N, Real *& xq, Real *& wq)
         {
             /* Computes the Gauss--Legendre quadrature points
              *
@@ -1389,8 +1394,8 @@ class DGInterpolater
 
             Real * x = new Real[N];
             for (int i = 0; i < N; i++ ) {
-                x[i] = cos( (Real)M_PI * a[i]
-                         + One / ( Eight * (Real)N * (Real)N * tan( a[i] ) ) );
+                x[i] = (Real)cos( (Real)M_PI * a[i]
+                         + One / ( Eight * (Real)N * (Real)N * (Real)tan( a[i] ) ) );
             }
 
             // Find roots using Newton's method
@@ -1401,7 +1406,7 @@ class DGInterpolater
             Real * dx = new Real[N];
             Real * dp = new Real[N];
             Real p00;
-            while ( delta > epsilon ) {
+            while (delta > epsilon) {
                 for (int i = 0; i < N; i++) {
                     p0[i] = One;
                     p1[i] = x[i];
@@ -1421,7 +1426,7 @@ class DGInterpolater
                                / ( One - x[i] * x[i] );
                     dx[i] = p1[i] / dp[i];
                     x[i] -= dx[i];
-                    delta = max(delta, std::abs(dx[i]) );
+                    delta = max(delta, (Real)std::abs(dx[i]));
                 }
             }
 
