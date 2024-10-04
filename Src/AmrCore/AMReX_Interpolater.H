@@ -1195,10 +1195,10 @@ extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 * Specifies interpolater interface for coarse-to-fine interpolation in space
 * with nodal DG-based elements.
 *
-* \param nNodes1D The number of nodes per element in each active dimension.
-* \param nDOF The total number of nodes per element.
-* \param nFine The total number of fine elements covering a coarse element.
-* \param Basis The polynomial basis on which the DG solution is based.
+* @param nNodes1D The number of nodes per element in each active dimension.
+* @param nDOF The total number of nodes per element.
+* @param nFine The total number of fine elements covering a coarse element.
+* @param Basis The polynomial basis on which the DG solution is based.
 */
 enum struct DGBasis { Lagrange };
 template <int nNodes1D, int nDOF, int nFine, DGBasis Basis>
