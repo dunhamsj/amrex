@@ -1194,27 +1194,144 @@ extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 *
 * Specifies interpolater interface for coarse-to-fine interpolation in space
 * with nodal DG-based elements.
+*
+* \param nNodes1D The number of nodes per element in each active dimension.
+* \param nDOF The total number of nodes per element.
+* \param nFine The total number of fine elements covering a coarse element.
+* \param Basis The polynomial basis on which the DG solution is based.
 */
 enum struct DGBasis { Lagrange };
-template <int nNodes1D, int nDOFX, int nFineV, DGBasis Basis>
+template <int nNodes1D, int nDOF, int nFine, DGBasis Basis>
 class DGInterpolater
     : public InterpBase
 {
     public:
         DGInterpolater ()
         {
+            int nNodes[3];
+            int nFineV[3];
+
+            nNodes[0] = nNodes1D;
+            nNodes[1] = 1;
+            nNodes[2] = 1;
+
+            nFineV[0] = 2;
+            nFineV[1] = 1;
+            nFineV[2] = 1;
+
+#if AMREX_SPACEDIM > 1
+            nNodes[1] = nNodes1D;
+            nFineV[1] = 2;
+#endif
+#if AMREX_SPACEDIM > 2
+            nNodes[2] = nNodes1D;
+            nFineV[2] = 2;
+#endif
+
+            Real * x1q = new Real[nNodes[0]];
+            Real * w1q = new Real[nNodes[0]];
+            Real * x2q = new Real[nNodes[1]];
+            Real * w2q = new Real[nNodes[1]];
+            Real * x3q = new Real[nNodes[2]];
+            Real * w3q = new Real[nNodes[2]];
+
+            Real * xiX1 = new Real[nNodes[0]];
+            Real * xiX2 = new Real[nNodes[1]];
+            Real * xiX3 = new Real[nNodes[2]];
+
+            int iFine, ii, jj;
+
             switch(Basis)
             {
                 case amrex::DGBasis::Lagrange:
-                    compute_quad_weights_and_points();
-                    for(int i = 0; i < nNodes1D; i++) {
-                        std::cout<<quad_points(i)<<" "<<quad_weights(i)<<"\n";
-                    }
+                    compute_quad_weights_and_points( nNodes[0], x1q, w1q );
+                    compute_quad_weights_and_points( nNodes[1], x2q, w2q );
+                    compute_quad_weights_and_points( nNodes[2], x3q, w3q );
+
+                    iFine = 0;
+                    for (int iFineX3 = 0; iFineX3 < nFineV[2]; iFineX3++) {
+                    for (int iFineX2 = 0; iFineX2 < nFineV[1]; iFineX2++) {
+                    for (int iFineX1 = 0; iFineX1 < nFineV[0]; iFineX1++) {
+
+                        if (nFineV[0] > 1) {
+                            for (int k = 0; k < nNodes[0]; k++) {
+                                xiX1[k]
+                                  = 0.5 * ( x1q[k] + std::pow(-1,iFineX1+1)
+                                                       * 0.5 );
+                            }
+                        } else {
+                            for (int k = 0; k < nNodes[0]; k++) {
+                                xiX1[k] = 0.0;
+                            }
+                        }
+
+                        if (nFineV[1] > 1) {
+                            for (int k = 0; k < nNodes[1]; k++) {
+                                xiX2[k]
+                                  = 0.5 * ( x2q[k] + std::pow(-1,iFineX2+1)
+                                                       * 0.5 );
+                            }
+                        } else {
+                            for (int k = 0; k < nNodes[1]; k++) {
+                                xiX2[k] = 0.0;
+                            }
+                        }
+
+                        if (nFineV[2] > 1) {
+                            for (int k = 0; k < nNodes[2]; k++) {
+                                xiX3[k]
+                                  = 0.5 * ( x3q[k] + std::pow(-1,iFineX3+1)
+                                                       * 0.5 );
+                            }
+                        } else {
+                            for (int k = 0; k < nNodes[2]; k++) {
+                                xiX3[k] = 0.0;
+                            }
+                        }
+
+                        ii = 0;
+                        for (int i3 = 0; i3 < nNodes[2]; i3++) {
+                        for (int i2 = 0; i2 < nNodes[1]; i2++) {
+                        for (int i1 = 0; i1 < nNodes[0]; i1++) {
+                            jj = 0;
+                            for (int j3 = 0; j3 < nNodes[2]; j3++) {
+                            for (int j2 = 0; j2 < nNodes[1]; j2++) {
+                            for (int j1 = 0; j1 < nNodes[0]; j1++) {
+                                m_c2fmatrix(iFine,ii,jj)
+                                  = Lag( 0.5 * ( x1q[i1]
+                                                   + std::pow(-1, iFineX1+1)
+                                                       * 0.5 ),
+                                         j1, x1q, nNodes[0] )
+                                  * Lag( 0.5 * ( x1q[i2]
+                                                   + std::pow(-1, iFineX2+1)
+                                                       * 0.5 ),
+                                         j2, x2q, nNodes[1] )
+                                  * Lag( 0.5 * ( x1q[i3]
+                                                   + std::pow(-1, iFineX3+1)
+                                                       * 0.5 ),
+                                         j3, x3q, nNodes[2] );
+                                jj++;
+                            }}}
+                            ii++;
+                        }}}
+                        iFine++;
+                    }}}
                     break;
                 default:
                     amrex::Abort("Unknown Basis");
             }
-            //  initialize matrix here.
+
+            delete[] xiX3;
+            delete[] xiX2;
+            delete[] xiX1;
+
+            delete[] w3q;
+            delete[] x3q;
+            delete[] w2q;
+            delete[] x2q;
+            delete[] w1q;
+            delete[] x1q;
+
         }
 
         /**
@@ -1236,88 +1353,115 @@ class DGInterpolater
             { return amrex::coarsen(fine,ratio); }
 
     private:
-        Array3D<Real,0,nFineV-1,0,nDOFX-1,0,nDOFX-1> m_matrix;
-        Array1D<Real,0,nNodes1D-1> quad_points;
-        Array1D<Real,0,nNodes1D-1> quad_weights;
-        void compute_quad_weights_and_points ()
+        Array3D<Real,0,nFine-1,0,nDOF-1,0,nDOF-1> m_c2fmatrix;
+        void compute_quad_weights_and_points
+          ( int N, Real *& xq, Real *& wq )
         {
-            /* Adapted from Mark Newman's Python version:
-               https://public.websites.umich.edu/~mejn/cp/programs/gaussxw.py
+            /* Computes the Gauss--Legendre quadrature points
+             *
+             * Adapted from Mark Newman's Python version:
+             * https://public.websites.umich.edu/~mejn/cp/programs/gaussxw.py
             */
 
-            if (nNodes1D == 1){
-                quad_points (0) = 0.0;
-                quad_weights(0) = 1.0;
+            if (N == 1){
+                xq[0] = 0.0;
+                wq[0] = 1.0;
                 return;
             }
 
             // Initial approximation to roots of the Legendre polynomial
-            Array1D<Real,0,nNodes1D-1> a;
-            Real da = ( 4.0 * (Real)nNodes1D - 1.0 - 3.0 ) / ( (Real)nNodes1D - 1.0 );
-            for (int i = 0; i < nNodes1D; i++) {
-                a(i) = ( 3.0 + (Real)i * da ) / ( 4.0 * (Real)nNodes1D + 2.0 );
+            Real * a = new Real[N];
+            Real da
+              = ( 4.0 * (Real)N - 1.0 - 3.0 ) / ( (Real)N - 1.0 );
+            for (int i = 0; i < N; i++) {
+                a[i] = ( 3.0 + (Real)i * da ) / ( 4.0 * (Real)N + 2.0 );
             }
 
-            Array1D<Real,0,nNodes1D-1> x;
-            for (int i = 0; i < nNodes1D; i++ ) {
-                x(i) = cos( M_PI * a(i)
-                         + 1.0 / ( 8.0 * (Real)nNodes1D * (Real)nNodes1D
-                                   * tan( a(i) ) ) );
+            Real * x = new Real[N];
+            for (int i = 0; i < N; i++ ) {
+                x[i] = cos( M_PI * a[i]
+                         + 1.0 / ( 8.0 * (Real)N * (Real)N
+                                   * tan( a[i] ) ) );
             }
 
             // Find roots using Newton's method
             Real const epsilon = 1.0e-15;
             Real delta = 1.0;
-            Array1D<Real,0,nNodes1D-1> p0, p1, dx, dp;
+            Real * p0 = new Real[N];
+            Real * p1 = new Real[N];
+            Real * dx = new Real[N];
+            Real * dp = new Real[N];
             Real p00;
             while ( delta > epsilon ) {
-                for (int i = 0; i < nNodes1D; i++) { p0(i) = 1.0; }
-                p1 = x;
-                for (int k = 1;  k < nNodes1D; k++) {
-                    for (int i = 0; i < nNodes1D; i++) {
-                        p00 = p1(i);
-                        p1(i) = ( ( 2.0 * (Real)k + 1.0 ) * x(i) * p1(i)
-                                  - (Real)k * p0(i) ) / ( (Real)k + 1.0 );
-                        p0(i) = p00;
+                for (int i = 0; i < N; i++) {
+                    p0[i] = 1.0;
+                    p1[i] = x[i];
+                }
+                for (int k = 1;  k < N; k++) {
+                    for (int i = 0; i < N; i++) {
+                        p00 = p1[i];
+                        p1[i] = ( ( 2.0 * (Real)k + 1.0 ) * x[i] * p1[i]
+                                  - (Real)k * p0[i] ) / ( (Real)k + 1.0 );
+                        p0[i] = p00;
                     }
                 }
                 delta = (Real)0.0;
-                for (int i = 0; i < nNodes1D; i++) {
-                    dp(i) = ( (Real)nNodes1D + 1.0 )
-                               * ( p0(i) - x(i) * p1(i) ) / ( 1.0 - x(i) * x(i) );
-                    dx(i) = p1(i) / dp(i);
-                    x(i) -= dx(i);
-                    delta = max(delta, std::abs(dx(i)) );
+                for (int i = 0; i < N; i++) {
+                    dp[i] = ( (Real)N + 1.0 )
+                               * ( p0[i] - x[i] * p1[i] )
+                               / ( 1.0 - x[i] * x[i] );
+                    dx[i] = p1[i] / dp[i];
+                    x[i] -= dx[i];
+                    delta = max(delta, std::abs(dx[i]) );
                 }
             }
 
             // Calculate the weights
 
-            Array1D<Real,0,nNodes1D-1> w;
-            for (int i = 0; i < nNodes1D; i++) {
-                w(i)
-                  = 2.0 * ( (Real)nNodes1D + 1.0 )
-                      * ( (Real)nNodes1D + 1.0 )
-                      / ( (Real)nNodes1D * (Real)nNodes1D * ( 1.0 - x(i) * x(i) )
-                          * dp(i) * dp(i) );
-                w(i) /= 2.0;
-                x(i) /= 2.0;
+            Real * w = new Real[N];
+            for (int i = 0; i < N; i++) {
+                w[i]
+                  = 2.0 * ( (Real)N + 1.0 )
+                      * ( (Real)N + 1.0 )
+                      / ( (Real)N * (Real)N * ( 1.0 - x[i] * x[i] )
+                          * dp[i] * dp[i] );
+                w[i] /= 2.0;
+                x[i] /= 2.0;
             }
 
             // Sort arrays in ascending order by quadrature point values
             //
 
-            for (int i = 0; i < nNodes1D; i++) {
-                quad_points (i) = x(nNodes1D-1-i);
-                quad_weights(i) = w(nNodes1D-1-i);
+            for (int i = 0; i < N; i++) {
+                xq[i] = x[N-1-i];
+                wq[i] = w[N-1-i];
             }
+
+            delete[] w;
+            delete[] dp;
+            delete[] dx;
+            delete[] p1;
+            delete[] p0;
+            delete[] x;
+            delete[] a;
 
             // Force central quadrature point to be zero
 
-            if (nNodes1D % 2 == 1) {
-                quad_points(nNodes1D/2) = 0.0;
+            if (N % 2 == 1) {
+                xq[N/2] = 0.0;
             }
-
+        } // end compute_quad_weights_and_points
+        Real Lag( Real x, int i, Real xq[], int N ) {
+            Real L = 1.0;
+            if (N == 1) {
+                return L;
+            }
+            for (int j = 0; j < nNodes1D; j++) {
+                if (i != j) {
+                    L *= ( x - xq[j] ) / ( xq[i] - xq[j] );
+                }
+            }
+            return L;
         }
 
 };
