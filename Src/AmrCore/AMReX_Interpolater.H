@@ -1387,7 +1387,7 @@ class DGInterpolater
 
             Real * x = new Real[N];
             for (int i = 0; i < N; i++ ) {
-                x[i] = cos( M_PI * a[i]
+                x[i] = cos( (Real)M_PI * a[i]
                          + One / ( Eight * (Real)N * (Real)N * tan( a[i] ) ) );
             }
 
