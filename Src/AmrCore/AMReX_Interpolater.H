@@ -1208,6 +1208,9 @@ class DGInterpolater
     public:
         DGInterpolater ()
         {
+            Real const Zero = 0.0;
+            Real const Half = 0.5;
+
             int nNodes[3];
             int nFineV[3];
 
@@ -1353,8 +1356,6 @@ class DGInterpolater
             { return amrex::coarsen(fine,ratio); }
 
     private:
-        Real const Zero = 0.0;
-        Real const Half = 0.5;
         Array3D<Real,0,nFine-1,0,nDOF-1,0,nDOF-1> m_c2fmatrix;
         void compute_quad_weights_and_points
           ( int N, Real *& xq, Real *& wq )
@@ -1365,6 +1366,7 @@ class DGInterpolater
              * https://public.websites.umich.edu/~mejn/cp/programs/gaussxw.py
             */
 
+            Real const Zero  = 0.0;
             Real const One   = 1.0;
             Real const Two   = 2.0;
             Real const Three = 3.0;
