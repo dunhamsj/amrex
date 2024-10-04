@@ -1451,7 +1451,7 @@ class DGInterpolater
                 xq[N/2] = 0.0;
             }
         } // end compute_quad_weights_and_points
-        Real Lag( Real x, int i, Real xq[], int N ) {
+        Real Lag( Real x, int i, Real const xq[], int N ) {
             Real L = 1.0;
             if (N == 1) {
                 return L;
