@@ -34,7 +34,9 @@
 
 #include <algorithm>
 #include <complex>
+#include <limits>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <variant>
 
@@ -42,6 +44,8 @@ namespace amrex::FFT
 {
 
 enum struct Direction { forward, backward, both, none };
+
+enum struct DomainStrategy { slab, pencil };
 
 AMREX_ENUM( Boundary, periodic, even, odd );
 
@@ -55,7 +59,11 @@ struct Info
     //! batch size.
     bool batch_mode = false;
 
+    //! Max number of processes to use
+    int nprocs = std::numeric_limits<int>::max();
+
     Info& setBatchMode (bool x) { batch_mode = x; return *this; }
+    Info& setNumProcs (int n) { nprocs = n; return *this; }
 };
 
 #ifdef AMREX_USE_HIP
@@ -137,89 +145,100 @@ struct Plan
     VendorPlan plan2{};
     void* pf = nullptr;
     void* pb = nullptr;
-#ifdef AMREX_USE_CUDA
-    std::size_t work_size = 0;
+
+#ifdef AMREX_USE_GPU
+    void set_ptrs (void* p0, void* p1) {
+        pf = p0;
+        pb = p1;
+    }
 #endif
 
     void destroy ()
     {
         if (defined) {
-#if defined(AMREX_USE_CUDA)
-            AMREX_CUFFT_SAFE_CALL(cufftDestroy(plan));
-#elif defined(AMREX_USE_HIP)
-            AMREX_ROCFFT_SAFE_CALL(rocfft_plan_destroy(plan));
-#elif defined(AMREX_USE_SYCL)
-            std::visit([](auto&& p) { delete p; }, plan);
-#else
-            if constexpr (std::is_same_v<float,T>) {
-                fftwf_destroy_plan(plan);
-            } else {
-                fftw_destroy_plan(plan);
-            }
-#endif
+            destroy_vendor_plan(plan);
             defined = false;
         }
 #if !defined(AMREX_USE_GPU)
         if (defined2) {
-            if constexpr (std::is_same_v<float,T>) {
-                fftwf_destroy_plan(plan2);
-            } else {
-                fftw_destroy_plan(plan2);
-            }
+            destroy_vendor_plan(plan2);
             defined2 = false;
         }
 #endif
     }
 
     template <Direction D>
-    void init_r2c (Box const& box, T* pr, VendorComplex* pc)
+    void init_r2c (Box const& box, T* pr, VendorComplex* pc, bool is_2d_transform = false)
     {
         static_assert(D == Direction::forward || D == Direction::backward);
+
+        int rank = is_2d_transform ? 2 : 1;
 
         kind = (D == Direction::forward) ? Kind::r2c_f : Kind::r2c_b;
         defined = true;
         pf = (void*)pr;
         pb = (void*)pc;
 
-        n = box.length(0);
-        int nc = (n/2) + 1;
-        howmany = AMREX_D_TERM(1, *box.length(1), *box.length(2));
+        int len[2] = {};
+        if (rank == 1) {
+            len[0] = box.length(0);
+            len[1] = box.length(0); // Not used except for HIP. Yes it's `(0)`.
+        } else {
+            len[0] = box.length(1); // Most FFT libraries assume row-major ordering
+            len[1] = box.length(0); // except for rocfft
+        }
+        int nr = (rank == 1) ? len[0] : len[0]*len[1];
+        n = nr;
+        int nc = (rank == 1) ? (len[0]/2+1) : (len[1]/2+1)*len[0];
+#if (AMREX_SPACEDIM == 1)
+        howmany = 1;
+#else
+        howmany = (rank == 1) ? AMREX_D_TERM(1, *box.length(1), *box.length(2))
+                              : AMREX_D_TERM(1, *1            , *box.length(2));
+#endif
 
         amrex::ignore_unused(nc);
 
 #if defined(AMREX_USE_CUDA)
+
         AMREX_CUFFT_SAFE_CALL(cufftCreate(&plan));
         AMREX_CUFFT_SAFE_CALL(cufftSetAutoAllocation(plan, 0));
+        std::size_t work_size;
         if constexpr (D == Direction::forward) {
             cufftType fwd_type = std::is_same_v<float,T> ? CUFFT_R2C : CUFFT_D2Z;
             AMREX_CUFFT_SAFE_CALL
-                (cufftMakePlanMany(plan, 1, &n, nullptr, 1, n, nullptr, 1, nc, fwd_type, howmany, &work_size));
-            AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
+                (cufftMakePlanMany(plan, rank, len, nullptr, 1, nr, nullptr, 1, nc, fwd_type, howmany, &work_size));
         } else {
             cufftType bwd_type = std::is_same_v<float,T> ? CUFFT_C2R : CUFFT_Z2D;
             AMREX_CUFFT_SAFE_CALL
-                (cufftMakePlanMany(plan, 1, &n, nullptr, 1, nc, nullptr, 1, n, bwd_type, howmany, &work_size));
-            AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
+                (cufftMakePlanMany(plan, rank, len, nullptr, 1, nc, nullptr, 1, nr, bwd_type, howmany, &work_size));
         }
+
 #elif defined(AMREX_USE_HIP)
 
         auto prec = std::is_same_v<float,T> ? rocfft_precision_single : rocfft_precision_double;
-        const std::size_t length = n;
+        // switch to column-major ordering
+        std::size_t length[2] = {std::size_t(len[1]), std::size_t(len[0])};
         if constexpr (D == Direction::forward) {
             AMREX_ROCFFT_SAFE_CALL
                 (rocfft_plan_create(&plan, rocfft_placement_notinplace,
-                                    rocfft_transform_type_real_forward, prec, 1,
-                                    &length, howmany, nullptr));
+                                    rocfft_transform_type_real_forward, prec, rank,
+                                    length, howmany, nullptr));
         } else {
             AMREX_ROCFFT_SAFE_CALL
                 (rocfft_plan_create(&plan, rocfft_placement_notinplace,
-                                    rocfft_transform_type_real_inverse, prec, 1,
-                                    &length, howmany, nullptr));
+                                    rocfft_transform_type_real_inverse, prec, rank,
+                                    length, howmany, nullptr));
         }
 
 #elif defined(AMREX_USE_SYCL)
 
-        auto* pp = new mkl_desc_r(n);
+        mkl_desc_r* pp;
+        if (rank == 1) {
+            pp = new mkl_desc_r(len[0]);
+        } else {
+            pp = new mkl_desc_r({std::int64_t(len[0]), std::int64_t(len[1])});
+        }
 #ifndef AMREX_USE_MKL_DFTI_2024
         pp->set_value(oneapi::mkl::dft::config_param::PLACEMENT,
                       oneapi::mkl::dft::config_value::NOT_INPLACE);
@@ -227,15 +246,18 @@ struct Plan
         pp->set_value(oneapi::mkl::dft::config_param::PLACEMENT, DFTI_NOT_INPLACE);
 #endif
         pp->set_value(oneapi::mkl::dft::config_param::NUMBER_OF_TRANSFORMS, howmany);
-        pp->set_value(oneapi::mkl::dft::config_param::FWD_DISTANCE, n);
+        pp->set_value(oneapi::mkl::dft::config_param::FWD_DISTANCE, nr);
         pp->set_value(oneapi::mkl::dft::config_param::BWD_DISTANCE, nc);
-        std::vector<std::int64_t> strides = {0,1};
+        std::vector<std::int64_t> strides;
+        strides.push_back(0);
+        if (rank == 2) { strides.push_back(len[1]); }
+        strides.push_back(1);
 #ifndef AMREX_USE_MKL_DFTI_2024
         pp->set_value(oneapi::mkl::dft::config_param::FWD_STRIDES, strides);
-        pp->set_value(oneapi::mkl::dft::config_param::BWD_STRIDES, strides);
+        // Do not set BWD_STRIDES
 #else
         pp->set_value(oneapi::mkl::dft::config_param::FWD_STRIDES, strides.data());
-        pp->set_value(oneapi::mkl::dft::config_param::BWD_STRIDES, strides.data());
+        // Do not set BWD_STRIDES
 #endif
         pp->set_value(oneapi::mkl::dft::config_param::WORKSPACE,
                       oneapi::mkl::dft::config_value::WORKSPACE_EXTERNAL);
@@ -247,26 +269,29 @@ struct Plan
         if constexpr (std::is_same_v<float,T>) {
             if constexpr (D == Direction::forward) {
                 plan = fftwf_plan_many_dft_r2c
-                    (1, &n, howmany, pr, nullptr, 1, n, pc, nullptr, 1, nc,
+                    (rank, len, howmany, pr, nullptr, 1, nr, pc, nullptr, 1, nc,
                      FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
             } else {
                 plan = fftwf_plan_many_dft_c2r
-                    (1, &n, howmany, pc, nullptr, 1, nc, pr, nullptr, 1, n,
+                    (rank, len, howmany, pc, nullptr, 1, nc, pr, nullptr, 1, nr,
                      FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
             }
         } else {
             if constexpr (D == Direction::forward) {
                 plan = fftw_plan_many_dft_r2c
-                    (1, &n, howmany, pr, nullptr, 1, n, pc, nullptr, 1, nc,
+                    (rank, len, howmany, pr, nullptr, 1, nr, pc, nullptr, 1, nc,
                      FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
             } else {
                 plan = fftw_plan_many_dft_c2r
-                    (1, &n, howmany, pc, nullptr, 1, nc, pr, nullptr, 1, n,
+                    (rank, len, howmany, pc, nullptr, 1, nc, pr, nullptr, 1, nr,
                      FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
             }
         }
 #endif
     }
+
+    template <Direction D, int M>
+    void init_r2c (IntVectND<M> const& fft_size, void*, void*, bool cache);
 
     template <Direction D>
     void init_c2c (Box const& box, VendorComplex* p)
@@ -286,9 +311,9 @@ struct Plan
         AMREX_CUFFT_SAFE_CALL(cufftSetAutoAllocation(plan, 0));
 
         cufftType t = std::is_same_v<float,T> ? CUFFT_C2C : CUFFT_Z2Z;
+        std::size_t work_size;
         AMREX_CUFFT_SAFE_CALL
             (cufftMakePlanMany(plan, 1, &n, nullptr, 1, n, nullptr, 1, n, t, howmany, &work_size));
-        AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
 
 #elif defined(AMREX_USE_HIP)
 
@@ -447,9 +472,9 @@ struct Plan
         AMREX_CUFFT_SAFE_CALL(cufftCreate(&plan));
         AMREX_CUFFT_SAFE_CALL(cufftSetAutoAllocation(plan, 0));
         cufftType fwd_type = std::is_same_v<float,T> ? CUFFT_R2C : CUFFT_D2Z;
+        std::size_t work_size;
         AMREX_CUFFT_SAFE_CALL
             (cufftMakePlanMany(plan, 1, &nex, nullptr, 1, nc*2, nullptr, 1, nc, fwd_type, howmany, &work_size));
-        AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
 
 #elif defined(AMREX_USE_HIP)
 
@@ -557,8 +582,14 @@ struct Plan
         auto* po = (TO*)((D == Direction::forward) ? pb : pf);
 
 #if defined(AMREX_USE_CUDA)
+        AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
+
+        std::size_t work_size = 0;
+        AMREX_CUFFT_SAFE_CALL(cufftGetSize(plan, &work_size));
+
         auto* work_area = The_Arena()->alloc(work_size);
         AMREX_CUFFT_SAFE_CALL(cufftSetWorkArea(plan, work_area));
+
         if constexpr (D == Direction::forward) {
             if constexpr (std::is_same_v<float,T>) {
                 AMREX_CUFFT_SAFE_CALL(cufftExecR2C(plan, pi, po));
@@ -597,8 +628,14 @@ struct Plan
         auto* p = (VendorComplex*)pf;
 
 #if defined(AMREX_USE_CUDA)
+        AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
+
+        std::size_t work_size = 0;
+        AMREX_CUFFT_SAFE_CALL(cufftGetSize(plan, &work_size));
+
         auto* work_area = The_Arena()->alloc(work_size);
         AMREX_CUFFT_SAFE_CALL(cufftSetWorkArea(plan, work_area));
+
         auto dir = (D == Direction::forward) ? CUFFT_FORWARD : CUFFT_INVERSE;
         if constexpr (std::is_same_v<float,T>) {
             AMREX_CUFFT_SAFE_CALL(cufftExecC2C(plan, p, p, dir));
@@ -1033,8 +1070,14 @@ struct Plan
 
 #if defined(AMREX_USE_CUDA)
 
+        AMREX_CUFFT_SAFE_CALL(cufftSetStream(plan, Gpu::gpuStream()));
+
+        std::size_t work_size = 0;
+        AMREX_CUFFT_SAFE_CALL(cufftGetSize(plan, &work_size));
+
         auto* work_area = The_Arena()->alloc(work_size);
         AMREX_CUFFT_SAFE_CALL(cufftSetWorkArea(plan, work_area));
+
         if constexpr (std::is_same_v<float,T>) {
             AMREX_CUFFT_SAFE_CALL(cufftExecR2C(plan, (T*)pscratch, (VendorComplex*)pscratch));
         } else {
@@ -1067,7 +1110,190 @@ struct Plan
 
 #endif
     }
+
+    static void destroy_vendor_plan (VendorPlan plan)
+    {
+#if defined(AMREX_USE_CUDA)
+        AMREX_CUFFT_SAFE_CALL(cufftDestroy(plan));
+#elif defined(AMREX_USE_HIP)
+        AMREX_ROCFFT_SAFE_CALL(rocfft_plan_destroy(plan));
+#elif defined(AMREX_USE_SYCL)
+        std::visit([](auto&& p) { delete p; }, plan);
+#else
+        if constexpr (std::is_same_v<float,T>) {
+            fftwf_destroy_plan(plan);
+        } else {
+            fftw_destroy_plan(plan);
+        }
+#endif
+    }
 };
+
+using Key = std::tuple<IntVectND<3>,Direction,Kind>;
+using PlanD = typename Plan<double>::VendorPlan;
+using PlanF = typename Plan<float>::VendorPlan;
+
+PlanD* get_vendor_plan_d (Key const& key);
+PlanF* get_vendor_plan_f (Key const& key);
+
+void add_vendor_plan_d (Key const& key, PlanD plan);
+void add_vendor_plan_f (Key const& key, PlanF plan);
+
+template <typename T>
+template <Direction D, int M>
+void Plan<T>::init_r2c (IntVectND<M> const& fft_size, void* pbf, void* pbb, bool cache)
+{
+    static_assert(D == Direction::forward || D == Direction::backward);
+
+    kind = (D == Direction::forward) ? Kind::r2c_f : Kind::r2c_b;
+    defined = true;
+    pf = pbf;
+    pb = pbb;
+
+    n = 1;
+    for (auto s : fft_size) { n *= s; }
+    howmany = 1;
+
+#if defined(AMREX_USE_GPU)
+    Key key = {fft_size.template expand<3>(), D, kind};
+    if (cache) {
+        VendorPlan* cached_plan = nullptr;
+        if constexpr (std::is_same_v<float,T>) {
+            cached_plan = get_vendor_plan_f(key);
+        } else {
+            cached_plan = get_vendor_plan_d(key);
+        }
+        if (cached_plan) {
+            plan = *cached_plan;
+            return;
+        }
+    }
+#else
+    amrex::ignore_unused(cache);
+#endif
+
+#if defined(AMREX_USE_CUDA)
+
+    AMREX_CUFFT_SAFE_CALL(cufftCreate(&plan));
+    AMREX_CUFFT_SAFE_CALL(cufftSetAutoAllocation(plan, 0));
+    cufftType type;
+    if constexpr (D == Direction::forward) {
+        type = std::is_same_v<float,T> ? CUFFT_R2C : CUFFT_D2Z;
+    } else {
+        type = std::is_same_v<float,T> ? CUFFT_C2R : CUFFT_Z2D;
+    }
+    std::size_t work_size;
+    if constexpr (M == 1) {
+        AMREX_CUFFT_SAFE_CALL
+            (cufftMakePlan1d(plan, fft_size[0], type, howmany, &work_size));
+    } else if constexpr (M == 2) {
+        AMREX_CUFFT_SAFE_CALL
+            (cufftMakePlan2d(plan, fft_size[1], fft_size[0], type, &work_size));
+    } else if constexpr (M == 3) {
+        AMREX_CUFFT_SAFE_CALL
+            (cufftMakePlan3d(plan, fft_size[2], fft_size[1], fft_size[0], type, &work_size));
+    }
+
+#elif defined(AMREX_USE_HIP)
+
+    auto prec = std::is_same_v<float,T> ? rocfft_precision_single : rocfft_precision_double;
+    std::size_t length[M];
+    for (int idim = 0; idim < M; ++idim) { length[idim] = fft_size[idim]; }
+    if constexpr (D == Direction::forward) {
+        AMREX_ROCFFT_SAFE_CALL
+            (rocfft_plan_create(&plan, rocfft_placement_notinplace,
+                                rocfft_transform_type_real_forward, prec, M,
+                                length, howmany, nullptr));
+    } else {
+        AMREX_ROCFFT_SAFE_CALL
+            (rocfft_plan_create(&plan, rocfft_placement_notinplace,
+                                rocfft_transform_type_real_inverse, prec, M,
+                                length, howmany, nullptr));
+    }
+
+#elif defined(AMREX_USE_SYCL)
+
+    mkl_desc_r* pp;
+    if (M == 1) {
+        pp = new mkl_desc_r(fft_size[0]);
+    } else {
+        std::vector<std::int64_t> len(M);
+        for (int idim = 0; idim < M; ++idim) {
+            len[idim] = fft_size[M-1-idim];
+        }
+        pp = new mkl_desc_r(len);
+    }
+#ifndef AMREX_USE_MKL_DFTI_2024
+    pp->set_value(oneapi::mkl::dft::config_param::PLACEMENT,
+                  oneapi::mkl::dft::config_value::NOT_INPLACE);
+#else
+    pp->set_value(oneapi::mkl::dft::config_param::PLACEMENT, DFTI_NOT_INPLACE);
+#endif
+
+    std::vector<std::int64_t> strides(M+1);
+    strides[0] = 0;
+    strides[M] = 1;
+    for (int i = M-1; i >= 1; --i) {
+        strides[i] = strides[i+1] * fft_size[M-1-i];
+    }
+
+#ifndef AMREX_USE_MKL_DFTI_2024
+    pp->set_value(oneapi::mkl::dft::config_param::FWD_STRIDES, strides);
+    // Do not set BWD_STRIDES
+#else
+    pp->set_value(oneapi::mkl::dft::config_param::FWD_STRIDES, strides.data());
+    // Do not set BWD_STRIDES
+#endif
+    pp->set_value(oneapi::mkl::dft::config_param::WORKSPACE,
+                  oneapi::mkl::dft::config_value::WORKSPACE_EXTERNAL);
+    pp->commit(amrex::Gpu::Device::streamQueue());
+    plan = pp;
+
+#else /* FFTW */
+
+    if (pf == nullptr || pb == nullptr) {
+        defined = false;
+        return;
+    }
+
+    int size_for_row_major[M];
+    for (int idim = 0; idim < M; ++idim) {
+        size_for_row_major[idim] = fft_size[M-1-idim];
+    }
+
+    if constexpr (std::is_same_v<float,T>) {
+        if constexpr (D == Direction::forward) {
+            plan = fftwf_plan_dft_r2c
+                (M, size_for_row_major, (float*)pf, (fftwf_complex*)pb,
+                 FFTW_ESTIMATE);
+        } else {
+            plan = fftwf_plan_dft_c2r
+                (M, size_for_row_major, (fftwf_complex*)pb, (float*)pf,
+                 FFTW_ESTIMATE);
+        }
+    } else {
+        if constexpr (D == Direction::forward) {
+            plan = fftw_plan_dft_r2c
+                (M, size_for_row_major, (double*)pf, (fftw_complex*)pb,
+                 FFTW_ESTIMATE);
+        } else {
+            plan = fftw_plan_dft_c2r
+                (M, size_for_row_major, (fftw_complex*)pb, (double*)pf,
+                 FFTW_ESTIMATE);
+        }
+    }
+#endif
+
+#if defined(AMREX_USE_GPU)
+    if (cache) {
+        if constexpr (std::is_same_v<float,T>) {
+            add_vendor_plan_f(key, plan);
+        } else {
+            add_vendor_plan_d(key, plan);
+        }
+    }
+#endif
+}
 
 namespace detail
 {
@@ -1087,13 +1313,17 @@ namespace detail
     template <typename FA1, typename FA2>
     std::unique_ptr<char,DataDeleter> make_mfs_share (FA1& fa1, FA2& fa2)
     {
+        bool not_same_fa = true;
+        if constexpr (std::is_same_v<FA1,FA2>) {
+            not_same_fa = (&fa1 != &fa2);
+        }
         using FAB1 = typename FA1::FABType::value_type;
         using FAB2 = typename FA2::FABType::value_type;
         using T1 = typename FAB1::value_type;
         using T2 = typename FAB2::value_type;
         auto myproc = ParallelContext::MyProcSub();
         bool alloc_1 = (myproc < fa1.size());
-        bool alloc_2 = (myproc < fa2.size());
+        bool alloc_2 = (myproc < fa2.size()) && not_same_fa;
         void* p = nullptr;
         if (alloc_1 && alloc_2) {
             Box const& box1 = fa1.fabbox(myproc);
